@@ -55,7 +55,8 @@ impl Grid {
             },
             Format::R8Unorm,
             Some(self.queue.family()),
-        ).expect("failed to create image");
+        )
+        .expect("failed to create image");
 
         let cells_out_img = StorageImage::new(
             self.device.clone(),
@@ -65,7 +66,8 @@ impl Grid {
             },
             Format::R8Unorm,
             Some(self.queue.family()),
-        ).expect("failed to create image");
+        )
+        .expect("failed to create image");
 
         let shader =
             ngs::Shader::load(self.device.clone()).expect("failed to create shader module");
@@ -104,7 +106,8 @@ impl Grid {
                     compute_pipeline.clone(),
                     set.clone(),
                     (),
-                ).unwrap()
+                )
+                .unwrap()
                 .copy_image_to_buffer(cells_out_img.clone(), self.cells.clone())
                 .unwrap()
                 .build()
@@ -143,7 +146,8 @@ impl Grid {
             },
             Format::R8Unorm,
             Some(self.queue.family()),
-        ).expect("failed to create image");
+        )
+        .expect("failed to create image");
 
         let centered_img = StorageImage::new(
             self.device.clone(),
@@ -153,14 +157,16 @@ impl Grid {
             },
             Format::R8Unorm,
             Some(self.queue.family()),
-        ).expect("failed to create image");
+        )
+        .expect("failed to create image");
 
         let centered_buff = unsafe {
             CpuAccessibleBuffer::uninitialized_array(
                 self.device.clone(),
                 (pattern_size.0 + 2 * border_width) * (pattern_size.1 + 2 * border_width),
                 BufferUsage::all(),
-            ).expect("failed to create buffer")
+            )
+            .expect("failed to create buffer")
         };
 
         let command_buffer =
@@ -169,7 +175,8 @@ impl Grid {
                 .clear_color_image(
                     centered_img.clone(),
                     ClearValue::Float([0.0, 0.0, 0.0, 0.0]),
-                ).unwrap()
+                )
+                .unwrap()
                 .build()
                 .unwrap();
 
@@ -196,7 +203,8 @@ impl Grid {
                     0,
                     [pattern_size.0 as u32, pattern_size.1 as u32, 1],
                     1,
-                ).unwrap()
+                )
+                .unwrap()
                 .copy_image_to_buffer(centered_img.clone(), centered_buff.clone())
                 .unwrap()
                 .build()
@@ -212,5 +220,89 @@ impl Grid {
         self.width = pattern_size.0 + 2 * border_width;
         self.height = pattern_size.1 + 2 * border_width;
         self.cells = centered_buff;
+    }
+}
+
+impl Grid {
+    pub fn render(
+        &self,
+        x_pos: usize,
+        y_pos: usize,
+        view_width: usize,
+        view_height: usize,
+        img_width: usize,
+        img_height: usize,
+    ) -> Vec<u8> {
+        let cells_img = StorageImage::new(
+            self.device.clone(),
+            Dimensions::Dim2d {
+                width: self.width as u32,
+                height: self.height as u32,
+            },
+            Format::R8Unorm,
+            Some(self.queue.family()),
+        )
+        .expect("failed to create image");
+
+        let rendered_img = StorageImage::new(
+            self.device.clone(),
+            Dimensions::Dim2d {
+                width: img_width as u32,
+                height: img_height as u32,
+            },
+            Format::R8Unorm,
+            Some(self.queue.family()),
+        )
+        .expect("failedto create image");
+
+        let rendered_buff = unsafe {
+            CpuAccessibleBuffer::uninitialized_array(
+                self.device.clone(),
+                img_width * img_height,
+                BufferUsage::all(),
+            )
+            .expect("failed to create buffer")
+        };
+
+        let command_buffer =
+            AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())
+                .unwrap()
+                .copy_buffer_to_image(self.cells.clone(), cells_img.clone())
+                .unwrap()
+                .blit_image(
+                    cells_img.clone(),
+                    [x_pos as i32, y_pos as i32, 0],
+                    [(x_pos + view_width) as i32, (y_pos + view_height) as i32, 1],
+                    0,
+                    0,
+                    rendered_img.clone(),
+                    [0, 0, 0],
+                    [img_width as i32, img_height as i32, 1],
+                    0,
+                    0,
+                    1,
+                    vulkano::sampler::Filter::Nearest,
+                )
+                .unwrap()
+                .copy_image_to_buffer(rendered_img.clone(), rendered_buff.clone())
+                .unwrap()
+                .build()
+                .unwrap();
+
+        let finished = command_buffer.execute(self.queue.clone()).unwrap();
+        finished
+            .then_signal_fence_and_flush()
+            .unwrap()
+            .wait(None)
+            .unwrap();
+
+        let mut output = Vec::with_capacity(img_width * img_height);
+
+        let read_buff = rendered_buff.read().unwrap();
+        for i in 0..img_width * img_height {
+            output.push(read_buff[i]);
+        }
+
+        output
     }
 }
